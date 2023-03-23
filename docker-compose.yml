@@ -1,0 +1,113 @@
+---
+version: '3.5'
+
+networks:
+  web:
+    external: true
+
+volumes:
+  penpot_postgres_v15:
+  penpot_assets:
+
+services:
+  penpot-frontend:
+    image: "penpotapp/frontend:latest"
+    restart: always
+    volumes:
+      - penpot_assets:/opt/data/assets
+    depends_on:
+      - penpot-backend
+      - penpot-exporter
+    networks:
+      - web
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.middlewares.http-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.http-redirect.redirectscheme.permanent=true"
+      - "traefik.http.routers.penpot-http.entrypoints=websecure"
+      - "traefik.http.routers.penpot-http.rule=Host(`${PENPOT_PUBLIC_URI}`)"
+      - "traefik.http.routers.penpot-http.middlewares=http-redirect"
+      - "traefik.http.routers.penpot-https.entrypoints=websecure"
+      - "traefik.http.routers.penpot-https.rule=Host(`${PENPOT_PUBLIC_URI}`)"
+      - "traefik.http.services.penpot-https.loadbalancer.server.port=80"
+      - "traefik.http.routers.penpot-https.tls=true"
+      - "traefik.http.routers.penpot-https.tls.certresolver=letsencrypt"
+    environment:
+      - PENPOT_FLAGS=enable-registration enable-login-with-password
+
+  penpot-backend:
+    image: "penpotapp/backend:latest"
+    restart: always
+    volumes:
+      - penpot_assets:/opt/data/assets
+    depends_on:
+      - penpot-postgres
+      - penpot-redis
+    networks:
+      - web
+    environment:
+      - PENPOT_FLAGS=enable-registration enable-login-with-password enable-email-verification enable-smtp
+      
+      - PENPOT_PUBLIC_URI=${PENPOT_PUBLIC_URI}
+      
+      - PENPOT_DATABASE_URI=${PENPOT_DATABASE_URI}
+      - PENPOT_DATABASE_USERNAME=${PENPOT_DATABASE_USERNAME}
+      - PENPOT_DATABASE_PASSWORD=${PENPOT_DATABASE_PASSWORD}
+      
+      - PENPOT_REDIS_URI=redis://penpot-redis/0
+      
+      - PENPOT_ASSETS_STORAGE_BACKEND=assets-fs
+      - PENPOT_STORAGE_ASSETS_FS_DIRECTORY=/opt/data/assets
+      
+      - PENPOT_TELEMETRY_ENABLED=true
+
+      - PENPOT_SMTP_DEFAULT_FROM=no-reply@gouale.com
+      - PENPOT_SMTP_DEFAULT_REPLY_TO=no-reply@gouale.com
+      - PENPOT_SMTP_HOST=${PENPOT_SMTP_HOST}
+      - PENPOT_SMTP_PORT=${PENPOT_SMTP_PORT}
+      - PENPOT_SMTP_USERNAME=${PENPOT_SMTP_USERNAME}
+      - PENPOT_SMTP_PASSWORD=${PENPOT_SMTP_PASSWORD}
+      - PENPOT_SMTP_TLS=true
+      - PENPOT_SMTP_SSL=false
+  
+  penpot-exporter:
+    image: "penpotapp/exporter:latest"
+    restart: always
+    networks:
+      - web
+    environment:
+      - PENPOT_PUBLIC_URI=http://penpot-frontend
+      - PENPOT_REDIS_URI=redis://penpot-redis/0
+    
+  penpot-postgres:
+    image: "postgres:15"
+    restart: always
+    stop_signal: SIGINT
+
+    volumes:
+      - penpot_postgres_v15:/var/lib/postgresql/data
+
+    networks:
+      - web
+
+    environment:
+      - POSTGRES_INITDB_ARGS=--data-checksums
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+
+  penpot-redis:
+    image: redis:7
+    restart: always
+    networks:
+      - web
+
+  penpot-mailcatch:
+    image: sj26/mailcatcher:latest
+    restart: always
+    expose:
+      - '1025'
+    ports:
+      - "1080:1080"
+    networks:
+      - web
